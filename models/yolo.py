@@ -91,7 +91,10 @@ class Model(nn.Module):
             self.yaml_file = Path(cfg).name
             with open(cfg, encoding='ascii', errors='ignore') as f:
                 self.yaml = yaml.safe_load(f)  # model dict
-        changes = [int(x) for x in changes.split(',')]
+        if changes != None:
+            changes = [int(x) for x in changes.split(',')]
+        else:
+            changes=[]
         # Define model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
         if nc and nc != self.yaml['nc']:

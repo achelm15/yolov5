@@ -67,9 +67,9 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
           device,
           callbacks
           ):
-    save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze = \
+    save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, changes = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
-        opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
+        opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.changes
 
     # Directories
     w = save_dir / 'weights'  # weights dir
@@ -497,9 +497,6 @@ def parse_opt(known=False):
 
 
 def main(opt, callbacks=Callbacks()):
-    print(type(opt.changes))
-
-    return
     # Checks
     if RANK in [-1, 0]:
         print_args(FILE.stem, opt)
