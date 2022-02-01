@@ -1,0 +1,4 @@
+train: ./LPCV/train/images
+val: ./LPCV/valid/images
+nc: 2
+names: ['person', 'sports-ball']

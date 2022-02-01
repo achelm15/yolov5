@@ -22,8 +22,10 @@
 *.cfg
 !setup.cfg
 !cfg/yolov3*.cfg
+*.zip
 
 storage.googleapis.com
+LPCV/*
 runs/*
 data/*
 data/images/*

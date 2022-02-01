@@ -490,12 +490,16 @@ def parse_opt(known=False):
     parser.add_argument('--upload_dataset', nargs='?', const=True, default=False, help='W&B: Upload data, "val" option')
     parser.add_argument('--bbox_interval', type=int, default=-1, help='W&B: Set bounding-box image logging interval')
     parser.add_argument('--artifact_alias', type=str, default='latest', help='W&B: Version of dataset artifact to use')
+    parser.add_argument('--changes', type=str, default=None, help='Changed to make')
 
     opt = parser.parse_known_args()[0] if known else parser.parse_args()
     return opt
 
 
 def main(opt, callbacks=Callbacks()):
+    print(type(opt.changes))
+
+    return
     # Checks
     if RANK in [-1, 0]:
         print_args(FILE.stem, opt)
