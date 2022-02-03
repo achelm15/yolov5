@@ -283,12 +283,16 @@ def parse_model(d, ch, changes):  # model_dict, input_channels(3)
             c2 = ch[f] // args[0] ** 2
         else:
             c2 = ch[f]
-
         if i in changes:
-            print(args[2]+2, i, "ASDfasdlkfjha;slkdfj;a")
+            if i==4:
+              args[2]=args[2]*2
+            if i==6:
+              args[2]=args[2]+2
+        if i in [2,4,6,8,13,17]:
+            print(args[2])
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
-        if i in changes:
-            print(m_)
+        # if i in changes:
+        #     print(m_)
         t = str(m)[8:-2].replace('__main__.', '')  # module type
         np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
