@@ -288,6 +288,8 @@ def parse_model(d, ch, changes):  # model_dict, input_channels(3)
               args[2]=args[2]*2
             if i==6:
               args[2]=args[2]+2
+        if i in [2,8,13]:
+            args[2]+=1
         if i in [2,4,6,8,13,17]:
             print(args[2])
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
