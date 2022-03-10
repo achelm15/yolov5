@@ -27,7 +27,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torch.quantization.quantize_fx as quantize_fx
+from torch.quantization.quantize_fx import prepare_fx, prepare_qat_fx, convert_fx
 import yaml
 from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -120,6 +120,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     check_suffix(weights, '.pt')  # check weights
     pretrained = weights.endswith('.pt')
     if pretrained:
+        print(cfg, nc, "ASDFASDF",hyp.get('anchors'), "ASDFAsdf",changes)
         with torch_distributed_zero_first(LOCAL_RANK):
             weights = attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -266,11 +267,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     model.hyp = hyp  # attach hyperparameters to model
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
-    print(model)
-    model_to_quantize = copy.deepcopy(model)
-    qconfig_dict = {"":torch.quantization.get_default_qconfig('qnnpack')}
-    model_to_quantize.train()
-    model_prepared = quantize_fx.prepare_qat_fx(model_to_quantize, qconfig_dict)
+
     # Start training
     t0 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
