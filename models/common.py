@@ -39,7 +39,7 @@ class Conv(nn.Module):
     # Standard convolution
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
         super().__init__()
-        self.conv = nn.intrinsic.qat.ConvBn2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False,qconfig = torch.quantization.get_default_qconfig('fbgemm'))
+        self.conv = nn.intrinsic.qat.ConvBn2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False,qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
         # self.bn = nn.BatchNorm2d(c2)
         self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
 
@@ -61,12 +61,12 @@ class TransformerLayer(nn.Module):
     # Transformer layer https://arxiv.org/abs/2010.11929 (LayerNorm layers removed for better performance)
     def __init__(self, c, num_heads):
         super().__init__()
-        self.q = nn.Linear(c, c, bias=False)
-        self.k = nn.Linear(c, c, bias=False)
-        self.v = nn.Linear(c, c, bias=False)
+        self.q = nn.qat.Linear(c, c, bias=False, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
+        self.k = nn.qat.Linear(c, c, bias=False, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
+        self.v = nn.qat.Linear(c, c, bias=False, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
         self.ma = nn.MultiheadAttention(embed_dim=c, num_heads=num_heads)
-        self.fc1 = nn.Linear(c, c, bias=False)
-        self.fc2 = nn.Linear(c, c, bias=False)
+        self.fc1 = nn.qat.Linear(c, c, bias=False, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
+        self.fc2 = nn.qat.Linear(c, c, bias=False, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
 
     def forward(self, x):
         x = self.ma(self.q(x), self.k(x), self.v(x))[0] + x
@@ -81,7 +81,7 @@ class TransformerBlock(nn.Module):
         self.conv = None
         if c1 != c2:
             self.conv = Conv(c1, c2)
-        self.linear = nn.Linear(c2, c2)  # learnable position embedding
+        self.linear = nn.qat.Linear(c2, c2, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))  # learnable position embedding
         self.tr = nn.Sequential(*(TransformerLayer(c2, num_heads) for _ in range(num_layers)))
         self.c2 = c2
 
@@ -112,8 +112,8 @@ class BottleneckCSP(nn.Module):
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
-        self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
+        self.cv2 = nn.qat.Conv2d(c1, c_, 1, 1, bias=False, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
+        self.cv3 = nn.qat.Conv2d(c_, c_, 1, 1, bias=False, qconfig = torch.quantization.get_default_qat_qconfig('fbgemm'))
         self.cv4 = Conv(2 * c_, c2, 1, 1)
         self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
         self.act = nn.SiLU()
@@ -456,7 +456,7 @@ class DetectMultiBackend(nn.Module):
             y[..., 1] *= h  # y
             y[..., 2] *= w  # w
             y[..., 3] *= h  # h
-            
+
         y = torch.tensor(y) if isinstance(y, np.ndarray) else y
         return (y, []) if val else y
 
