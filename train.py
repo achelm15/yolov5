@@ -265,6 +265,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     model.hyp = hyp  # attach hyperparameters to model
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
+    model.train()
+    model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+    # model_fuse = torch.quantization.fuse_modules(model,[[[]])
+    model_prepared = torch.quantization.prepare_qat(model)
 
     # Start training
     t0 = time.time()
@@ -426,6 +430,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         for f in last, best:
             if f.exists():
                 strip_optimizer(f)  # strip optimizers
+                print(type(f))
                 if f is best:
                     LOGGER.info(f'\nValidating {f}...')
                     results, _, _ = val.run(data_dict,
