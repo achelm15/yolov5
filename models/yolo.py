@@ -95,6 +95,7 @@ class Model(nn.Module):
             changes = [int(x) for x in changes.split(',')]
         else:
             changes=[]
+
         # Define model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
         if nc and nc != self.yaml['nc']:
@@ -314,8 +315,6 @@ def parse_model(d, ch, changes):  # model_dict, input_channels(3)
         if i in [3,5,7,9,14,18]:
             print(args[2])
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
-        # if i in changes:
-        #     print(m_)
         t = str(m)[8:-2].replace('__main__.', '')  # module type
         np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
