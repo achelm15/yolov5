@@ -3,6 +3,7 @@
 Common modules
 """
 
+from ast import arg
 import json
 import math
 import platform
@@ -49,6 +50,20 @@ class Conv(nn.Module):
     def forward_fuse(self, x):
         return self.act(self.conv(x))
 
+
+class Quant(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.quant = torch.quantization.QuantStub()
+    def forward (self,x):
+        return self.quant(x)
+
+class DeQuant(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.dequant = torch.quantization.DeQuantStub()
+    def forward (self,x):
+        return self.dequant(x)
 
 class DWConv(Conv):
     # Depth-wise convolution class
