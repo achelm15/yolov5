@@ -268,7 +268,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
 
-    qat_model = copy.deepcopy(model)
+    qat_model = deepcopy(model)
     qat_model.fuse_model()
     qat_model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
     torch.quantization.prepare_qat(qat_model, inplace=True)
