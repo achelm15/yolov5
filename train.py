@@ -21,11 +21,13 @@ import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+import copy
 
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import torch.quantization.quantize_fx as quantize_fx
 import yaml
 from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -264,7 +266,11 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     model.hyp = hyp  # attach hyperparameters to model
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
-
+    print(model)
+    model_to_quantize = copy.deepcopy(model)
+    qconfig_dict = {"":torch.quantization.get_default_qat_qconfig('qnnpack')}
+    model_to_quantize.train()
+    model_prepared = quantize_fx.prepare_qat_fx(model_to_quantize, qconfig_dict)
     # Start training
     t0 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
@@ -420,6 +426,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training -----------------------------------------------------------------------------------------------------
+    model_to_quantize = quantize_fx.convert_fx(model_prepared)
+    model_to_quantize = copy.deepcopy(model)
+    model_fused = quantize_fx.fuse_fx(model_to_quantize)
+    print(model_fused)
     if RANK in [-1, 0]:
         LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
         for f in last, best:
