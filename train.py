@@ -268,7 +268,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     model.names = names
     print(model)
     model_to_quantize = copy.deepcopy(model)
-    qconfig_dict = {"":torch.quantization.get_default_qat_qconfig('qnnpack')}
+    qconfig_dict = {"":torch.quantization.get_default_qconfig('qnnpack')}
     model_to_quantize.train()
     model_prepared = quantize_fx.prepare_qat_fx(model_to_quantize, qconfig_dict)
     # Start training
