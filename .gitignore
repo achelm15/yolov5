@@ -25,6 +25,10 @@
 !cfg/yolov3*.cfg
 *.zip
 
+hyp*
+opt*
+*tfevents.*
+
 storage.googleapis.com
 LPCV/*
 runs/*

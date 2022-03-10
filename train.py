@@ -249,7 +249,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             # Anchors
             if not opt.noautoanchor:
                 check_anchors(dataset, model=model, thr=hyp['anchor_t'], imgsz=imgsz)
-            model.to(torch.float16).float()  # pre-reduce anchor precision
+            model.half().float()  # pre-reduce anchor precision
 
         callbacks.run('on_pretrain_routine_end')
 
@@ -258,7 +258,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
 
     # Model attributes
-    nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
+    nl = de_parallel(model).model[-2].nl  # number of detection layers (to scale hyps)
     hyp['box'] *= 3 / nl  # scale to layers
     hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
     hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
@@ -267,6 +267,11 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     model.hyp = hyp  # attach hyperparameters to model
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
+
+    qat_model = copy.deepcopy(model)
+    qat_model.fuse_model()
+    qat_model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+    torch.quantization.prepare_qat(qat_model, inplace=True)
 
     # Start training
     t0 = time.time()
@@ -278,17 +283,17 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     stopper = EarlyStopping(patience=opt.patience)
-    compute_loss = ComputeLoss(model)  # init loss class
+    compute_loss = ComputeLoss(qat_model)  # init loss class
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
                 f'Using {train_loader.num_workers * WORLD_SIZE} dataloader workers\n'
                 f"Logging results to {colorstr('bold', save_dir)}\n"
                 f'Starting training for {epochs} epochs...')
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
-        model.train()
+        qat_model.train()
 
         # Update image weights (optional, single-GPU only)
         if opt.image_weights:
-            cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
+            cw = qat_model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
             iw = labels_to_image_weights(dataset.labels, nc=nc, class_weights=cw)  # image weights
             dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  # rand weighted idx
 
@@ -329,7 +334,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
             # Forward
             with amp.autocast(enabled=cuda):
-                pred = model(imgs)  # forward
+                pred = qat_model(imgs)  # forward
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
                 if RANK != -1:
                     loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
@@ -345,7 +350,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 scaler.update()
                 optimizer.zero_grad()
                 if ema:
-                    ema.update(model)
+                    ema.update(qat_model)
                 last_opt_step = ni
 
             # Log
@@ -366,7 +371,9 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         if RANK in [-1, 0]:
             # mAP
             callbacks.run('on_train_epoch_end', epoch=epoch)
-            ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
+            quantized_model = torch.quantization.convert(qat_model.eval(), inplace=False)
+            quantized_model.eval()
+            ema.update_attr(qat_model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
             final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
             if not noval or final_epoch:  # Calculate mAP
                 results, maps, _ = val.run(data_dict,
@@ -391,8 +398,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             if (not nosave) or (final_epoch and not evolve):  # if save
                 ckpt = {'epoch': epoch,
                         'best_fitness': best_fitness,
-                        'model': deepcopy(de_parallel(model)).to(torch.float16),
-                        'ema': deepcopy(ema.ema).to(torch.float16),
+                        'model': deepcopy(de_parallel(qat_model)).half(),
+                        'ema': deepcopy(ema.ema).half(),
                         'updates': ema.updates,
                         'optimizer': optimizer.state_dict(),
                         'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
@@ -437,7 +444,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                     results, _, _ = val.run(data_dict,
                                             batch_size=batch_size // WORLD_SIZE * 2,
                                             imgsz=imgsz,
-                                            model=attempt_load(f, device).to(torch.float16),
+                                            model=attempt_load(f, device).half(),
                                             iou_thres=0.65 if is_coco else 0.60,  # best pycocotools results at 0.65
                                             single_cls=single_cls,
                                             dataloader=val_loader,
