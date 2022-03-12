@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+from csv import QUOTE_MINIMAL
 import math
 import os
 import random
@@ -268,7 +269,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
     qat_model = deepcopy(model)
     qat_model.fuse_model()
-    qat_model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+    torch.backends.quantized.engine = 'qnnpack'
+    qat_model.qconfig = torch.quantization.get_default_qat_qconfig('qnnpack')
     torch.quantization.prepare_qat(qat_model, inplace=True)
 
     # Start training
@@ -369,15 +371,22 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         if RANK in [-1, 0]:
             # mAP
             callbacks.run('on_train_epoch_end', epoch=epoch)
+            for p in qat_model.parameters():
+                print(p, "LLLLLLLLLL")
+            j = deepcopy(qat_model)
+            qat_model.eval()
+            for p in qat_model.parameters():
+                print(p, "LLLLLLLLLL")
             quantized_model = torch.quantization.convert(qat_model.eval(), inplace=False)
-            quantized_model.eval()
-            ema.update_attr(qat_model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
+            print("HI")
+            # return quantized_model, j
+            ema.update_attr(quantized_model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
             final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
             if not noval or final_epoch:  # Calculate mAP
                 results, maps, _ = val.run(data_dict,
                                            batch_size=batch_size // WORLD_SIZE * 2,
                                            imgsz=imgsz,
-                                           model=ema.ema,
+                                           model=quantized_model,
                                            single_cls=single_cls,
                                            dataloader=val_loader,
                                            save_dir=save_dir,
@@ -396,14 +405,16 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             if (not nosave) or (final_epoch and not evolve):  # if save
                 ckpt = {'epoch': epoch,
                         'best_fitness': best_fitness,
-                        'model': deepcopy(de_parallel(qat_model)).half(),
-                        'ema': deepcopy(ema.ema).half(),
+                        'model': deepcopy(de_parallel(quantized_model)),
+                        'ema': deepcopy(ema.ema),
                         'updates': ema.updates,
                         'optimizer': optimizer.state_dict(),
                         'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
                         'date': datetime.now().isoformat()}
 
                 # Save last, best and delete
+                #####THIS IS BROKEN THIS IS BROKEN THIS IS BROKEN THIS IS BROKEN THIS IS BROKENTHIS IS BROKENTHIS IS BROKEN THIS IS BROKEN THIS IS BROKEN THIS IS BROKEN
+                # ckpt = {'model': quantized_model,'optimizer' :optimizer.state_dict()}
                 torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
@@ -428,6 +439,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training -----------------------------------------------------------------------------------------------------
+    return "HI"
     if RANK in [-1, 0]:
         LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
         for f in last, best:
@@ -544,7 +556,7 @@ def main(opt, callbacks=Callbacks()):
 
     # Train
     if not opt.evolve:
-        train(opt.hyp, opt, device, callbacks)
+        return train(opt.hyp, opt, device, callbacks)
         if WORLD_SIZE > 1 and RANK == 0:
             LOGGER.info('Destroying process group... ')
             dist.destroy_process_group()
@@ -626,6 +638,7 @@ def main(opt, callbacks=Callbacks()):
 
             # Train mutation
             results = train(hyp.copy(), opt, device, callbacks)
+            return results
             callbacks = Callbacks()
             # Write mutation results
             print_mutation(results, hyp.copy(), save_dir, opt.bucket)
@@ -642,7 +655,7 @@ def run(**kwargs):
     opt = parse_opt(True)
     for k, v in kwargs.items():
         setattr(opt, k, v)
-    main(opt)
+    return main(opt)
     return opt
 
 
