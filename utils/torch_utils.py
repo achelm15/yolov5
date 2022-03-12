@@ -12,6 +12,7 @@ import time
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
+from collections import OrderedDict
 
 import torch
 import torch.distributed as dist
@@ -319,10 +320,13 @@ class ModelEMA:
             d = self.decay(self.updates)
 
             msd = de_parallel(model).state_dict()  # model state_dict
+            print("ASDFADS",list(set(self.ema.named_parameters())-set(model.named_parameters())),"ASDFASDF")
             for k, v in self.ema.state_dict().items():
                 if v.dtype.is_floating_point:
+                    print(k)
                     v *= d
-                    v += (1 - d) * msd[k].detach()
+                    if k in msd:
+                        v += (1 - d) * msd[k].detach()
 
     def update_attr(self, model, include=(), exclude=('process_group', 'reducer')):
         # Update EMA attributes

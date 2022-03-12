@@ -45,6 +45,7 @@ class Detect(nn.Module):
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
         self.inplace = inplace  # use in-place ops (e.g. slice assignment)
+        print(self.m)
 
     def forward(self, x):
         z = []  # inference output
@@ -117,7 +118,6 @@ class Model(nn.Module):
             m.anchors /= m.stride.view(-1, 1, 1)
             check_anchor_order(m)
             self.stride = m.stride
-            print(self.stride)
             self._initialize_biases()  # only run once
 
         # Init weights, biases
@@ -335,7 +335,6 @@ if __name__ == '__main__':
     parser.add_argument('--changes', type=str, help='Enter Changes to YOLO model')
     opt = parser.parse_args()
     opt.cfg = check_yaml(opt.cfg)  # check YAML
-    print_args(FILE.stem, opt)
     device = select_device(opt.device)
 
     # Create model
