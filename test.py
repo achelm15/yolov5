@@ -1,5 +1,6 @@
 from models.yolo import Model, Detect
 from models.common import *
+import train
 
 
 def fuse_model(self):
@@ -22,5 +23,5 @@ def fuse_model(self):
         else:
             continue
 
-model = Model(cfg = 'models/yolov5s.yaml')
-fuse_model(model)
+model = train(data='data.yaml', cfg='models/yolov5s.yaml', img=256, epochs=1, batch=100)
+print(model)
