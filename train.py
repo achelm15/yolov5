@@ -257,7 +257,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
 
     # Model attributes
-    nl = de_parallel(model).model[-2].nl  # number of detection layers (to scale hyps)
+    nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
     hyp['box'] *= 3 / nl  # scale to layers
     hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
     hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
@@ -266,16 +266,6 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     model.hyp = hyp  # attach hyperparameters to model
     model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
     model.names = names
-    model.train()
-    model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
-    # model_fuse = torch.quantization.fuse_modules(model,[[[]])
-    model_prepared = torch.quantization.prepare_qat(model)
-
-    qat_model = deepcopy(model)
-    qat_model.fuse_model()
-    torch.backends.quantized.engine = 'qnnpack'
-    qat_model.qconfig = torch.quantization.get_default_qat_qconfig('qnnpack')
-    torch.quantization.prepare_qat(qat_model, inplace=True)
 
     # Start training
     t0 = time.time()
@@ -287,17 +277,17 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
     stopper = EarlyStopping(patience=opt.patience)
-    compute_loss = ComputeLoss(qat_model)  # init loss class
+    compute_loss = ComputeLoss(model)  # init loss class
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
                 f'Using {train_loader.num_workers * WORLD_SIZE} dataloader workers\n'
                 f"Logging results to {colorstr('bold', save_dir)}\n"
                 f'Starting training for {epochs} epochs...')
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
-        qat_model.train()
+        model.train()
 
         # Update image weights (optional, single-GPU only)
         if opt.image_weights:
-            cw = qat_model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
+            cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
             iw = labels_to_image_weights(dataset.labels, nc=nc, class_weights=cw)  # image weights
             dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  # rand weighted idx
 
@@ -338,7 +328,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
             # Forward
             with amp.autocast(enabled=cuda):
-                pred = qat_model(imgs)  # forward
+                pred = model(imgs)  # forward
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
                 if RANK != -1:
                     loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
@@ -354,7 +344,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 scaler.update()
                 optimizer.zero_grad()
                 if ema:
-                    ema.update(qat_model)
+                    ema.update(model)
                 last_opt_step = ni
 
             # Log
@@ -375,22 +365,13 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         if RANK in [-1, 0]:
             # mAP
             callbacks.run('on_train_epoch_end', epoch=epoch)
-            for p in qat_model.parameters():
-                print(p, "LLLLLLLLLL")
-            j = deepcopy(qat_model)
-            qat_model.eval()
-            for p in qat_model.parameters():
-                print(p, "LLLLLLLLLL")
-            quantized_model = torch.quantization.convert(qat_model.eval(), inplace=False)
-            print("HI")
-            # return quantized_model, j
-            ema.update_attr(quantized_model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
+            ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
             final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
             if not noval or final_epoch:  # Calculate mAP
                 results, maps, _ = val.run(data_dict,
                                            batch_size=batch_size // WORLD_SIZE * 2,
                                            imgsz=imgsz,
-                                           model=quantized_model,
+                                           model=ema.ema,
                                            single_cls=single_cls,
                                            dataloader=val_loader,
                                            save_dir=save_dir,
@@ -409,16 +390,14 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             if (not nosave) or (final_epoch and not evolve):  # if save
                 ckpt = {'epoch': epoch,
                         'best_fitness': best_fitness,
-                        'model': deepcopy(de_parallel(quantized_model)),
-                        'ema': deepcopy(ema.ema),
+                        'model': deepcopy(de_parallel(model)).half(),
+                        'ema': deepcopy(ema.ema).half(),
                         'updates': ema.updates,
                         'optimizer': optimizer.state_dict(),
                         'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
                         'date': datetime.now().isoformat()}
 
                 # Save last, best and delete
-                #####THIS IS BROKEN THIS IS BROKEN THIS IS BROKEN THIS IS BROKEN THIS IS BROKENTHIS IS BROKENTHIS IS BROKEN THIS IS BROKEN THIS IS BROKEN THIS IS BROKEN
-                # ckpt = {'model': quantized_model,'optimizer' :optimizer.state_dict()}
                 torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
@@ -443,13 +422,11 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training -----------------------------------------------------------------------------------------------------
-    return "HI"
     if RANK in [-1, 0]:
         LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
         for f in last, best:
             if f.exists():
                 strip_optimizer(f)  # strip optimizers
-                print(type(f))
                 if f is best:
                     LOGGER.info(f'\nValidating {f}...')
                     results, _, _ = val.run(data_dict,
@@ -561,7 +538,7 @@ def main(opt, callbacks=Callbacks()):
 
     # Train
     if not opt.evolve:
-        return train(opt.hyp, opt, device, callbacks)
+        train(opt.hyp, opt, device, callbacks)
         if WORLD_SIZE > 1 and RANK == 0:
             LOGGER.info('Destroying process group... ')
             dist.destroy_process_group()
@@ -660,7 +637,7 @@ def run(**kwargs):
     opt = parse_opt(True)
     for k, v in kwargs.items():
         setattr(opt, k, v)
-    return main(opt)
+    main(opt)
     return opt
 
 

@@ -1,7 +1,6 @@
 # YOLOv5 🚀 by Ultralytics, GPL-3.0 license
 """
 YOLO-specific modules
-
 Usage:
     $ python path/to/models/yolo.py --cfg yolov5s.yaml
 """
@@ -45,7 +44,6 @@ class Detect(nn.Module):
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
         self.inplace = inplace  # use in-place ops (e.g. slice assignment)
-        print(self.m)
 
     def forward(self, x):
         z = []  # inference output
@@ -72,18 +70,18 @@ class Detect(nn.Module):
 
     def _make_grid(self, nx=20, ny=20, i=0):
         d = self.anchors[i].device
+        shape = 1, self.na, ny, nx, 2  # grid shape
         if check_version(torch.__version__, '1.10.0'):  # torch>=1.10.0 meshgrid workaround for torch>=0.7 compatibility
-            yv, xv = torch.meshgrid([torch.arange(ny, device=d), torch.arange(nx, device=d)], indexing='ij')
+            yv, xv = torch.meshgrid(torch.arange(ny, device=d), torch.arange(nx, device=d), indexing='ij')
         else:
-            yv, xv = torch.meshgrid([torch.arange(ny, device=d), torch.arange(nx, device=d)])
-        grid = torch.stack((xv, yv), 2).expand((1, self.na, ny, nx, 2)).float()
-        anchor_grid = (self.anchors[i].clone() * self.stride[i]) \
-            .view((1, self.na, 1, 1, 2)).expand((1, self.na, ny, nx, 2)).float()
+            yv, xv = torch.meshgrid(torch.arange(ny, device=d), torch.arange(nx, device=d))
+        grid = torch.stack((xv, yv), 2).expand(shape).float()
+        anchor_grid = (self.anchors[i] * self.stride[i]).view((1, self.na, 1, 1, 2)).expand(shape).float()
         return grid, anchor_grid
 
 
 class Model(nn.Module):
-    def __init__(self, cfg='yolov5s.yaml', ch=3, nc=None, anchors=None, changes=None):  # model, input channels, number of classes
+    def __init__(self, cfg='yolov5s.yaml', ch=3, nc=None, anchors=None):  # model, input channels, number of classes
         super().__init__()
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
@@ -92,10 +90,6 @@ class Model(nn.Module):
             self.yaml_file = Path(cfg).name
             with open(cfg, encoding='ascii', errors='ignore') as f:
                 self.yaml = yaml.safe_load(f)  # model dict
-        if changes != None:
-            changes = [int(x) for x in changes.split(',')]
-        else:
-            changes=[]
 
         # Define model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
@@ -105,18 +99,18 @@ class Model(nn.Module):
         if anchors:
             LOGGER.info(f'Overriding model.yaml anchors with anchors={anchors}')
             self.yaml['anchors'] = round(anchors)  # override yaml value
-        self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch], changes=changes)  # model, savelist
+        self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
         self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
         self.inplace = self.yaml.get('inplace', True)
 
         # Build strides, anchors
-        m = self.model[-2]  # Detect()
+        m = self.model[-1]  # Detect()
         if isinstance(m, Detect):
             s = 256  # 2x min stride
             m.inplace = self.inplace
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
+            check_anchor_order(m)  # must be in pixel-space (not grid-space)
             m.anchors /= m.stride.view(-1, 1, 1)
-            check_anchor_order(m)
             self.stride = m.stride
             self._initialize_biases()  # only run once
 
@@ -176,7 +170,7 @@ class Model(nn.Module):
 
     def _clip_augmented(self, y):
         # Clip YOLOv5 augmented inference tails
-        nl = self.model[-2].nl-1  # number of detection layers (P3-P5)
+        nl = self.model[-1].nl  # number of detection layers (P3-P5)
         g = sum(4 ** x for x in range(nl))  # grid points
         e = 1  # exclude layer count
         i = (y[0].shape[1] // g) * sum(4 ** x for x in range(e))  # indices
@@ -201,7 +195,7 @@ class Model(nn.Module):
     def _initialize_biases(self, cf=None):  # initialize biases into Detect(), cf is class frequency
         # https://arxiv.org/abs/1708.02002 section 3.3
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
-        m = self.model[-2]  # Detect() module
+        m = self.model[-1]  # Detect() module
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
             b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
@@ -209,7 +203,7 @@ class Model(nn.Module):
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
     def _print_biases(self):
-        m = self.model[-2]  # Detect() module
+        m = self.model[-1]  # Detect() module
         for mi in m.m:  # from
             b = mi.bias.detach().view(m.na, -1).T  # conv.bias(255) to (3,85)
             LOGGER.info(
@@ -236,7 +230,7 @@ class Model(nn.Module):
     def _apply(self, fn):
         # Apply to(), cpu(), cuda(), half() to model tensors that are not parameters or registered buffers
         self = super()._apply(fn)
-        m = self.model[-2]  # Detect()
+        m = self.model[-1]  # Detect()
         if isinstance(m, Detect):
             m.stride = fn(m.stride)
             m.grid = list(map(fn, m.grid))
@@ -244,26 +238,6 @@ class Model(nn.Module):
                 m.anchor_grid = list(map(fn, m.anchor_grid))
         return self
     
-    def fuse_model(self):
-        for x in self.model:
-            if type(x)==Conv:
-                torch.quantization.fuse_modules(x, ['conv', 'bn'], inplace=True)
-            elif type(x)==C3:
-                for k in x.children():
-                    if type(k)==Conv:
-                        torch.quantization.fuse_modules(k, ['conv', 'bn'], inplace=True)
-                    else:
-                        for g in k.children():
-                            for j in g.children():
-                                if type(j)==Conv:
-                                    torch.quantization.fuse_modules(j, ['conv', 'bn'], inplace=True)
-            elif type(x)==SPPF:
-                for u in x.children():
-                    if type(u)==Conv:
-                        torch.quantization.fuse_modules(u, ['conv', 'bn'], inplace=True)
-            else:
-                continue
-
 
 def parse_model(d, ch, changes):  # model_dict, input_channels(3)
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
@@ -306,13 +280,13 @@ def parse_model(d, ch, changes):  # model_dict, input_channels(3)
         else:
             c2 = ch[f]
         if i in changes:
-            if i==5:
+            if i==4:
               args[2]=args[2]*2
-            if i==7:
+            if i==6:
               args[2]=args[2]+2
-            if i in [3,9,14]:
+            if i in [2,8,13]:
                 args[2]+=1
-        if i in [3,5,7,9,14,18]:
+        if i in [2,4,6,8,13,17]:
             print(args[2])
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
         t = str(m)[8:-2].replace('__main__.', '')  # module type
