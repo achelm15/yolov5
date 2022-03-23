@@ -759,9 +759,7 @@ def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_op
         x[k] = None
     x['epoch'] = -1
     x['model']  # to FP16
-    print(x['model'])
     for p in x['model'].parameters():
-        print(p.data)
         p.requires_grad = False
     torch.save(x, s or f)
     mb = os.path.getsize(s or f) / 1E6  # filesize

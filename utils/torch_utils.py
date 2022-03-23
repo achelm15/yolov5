@@ -320,10 +320,8 @@ class ModelEMA:
             d = self.decay(self.updates)
 
             msd = de_parallel(model).state_dict()  # model state_dict
-            print("ASDFADS",list(set(self.ema.named_parameters())-set(model.named_parameters())),"ASDFASDF")
             for k, v in self.ema.state_dict().items():
                 if v.dtype.is_floating_point:
-                    print(k)
                     v *= d
                     if k in msd:
                         v += (1 - d) * msd[k].detach()
