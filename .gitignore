@@ -24,6 +24,17 @@
 !setup.cfg
 !cfg/yolov3*.cfg
 *.zip
+*.txt
+*hyp.yaml
+*opt.yaml
+*events*
+*.cache
+*.m4v
+
+
+hyp*
+opt*
+*tfevents.*
 
 storage.googleapis.com
 LPCV/*

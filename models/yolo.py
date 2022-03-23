@@ -45,6 +45,7 @@ class Detect(nn.Module):
         self.register_buffer('anchors', torch.tensor(anchors).float().view(self.nl, -1, 2))  # shape(nl,na,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
         self.inplace = inplace  # use in-place ops (e.g. slice assignment)
+        print(self.m)
 
     def forward(self, x):
         z = []  # inference output
@@ -109,7 +110,7 @@ class Model(nn.Module):
         self.inplace = self.yaml.get('inplace', True)
 
         # Build strides, anchors
-        m = self.model[-1]  # Detect()
+        m = self.model[-2]  # Detect()
         if isinstance(m, Detect):
             s = 256  # 2x min stride
             m.inplace = self.inplace
@@ -175,7 +176,7 @@ class Model(nn.Module):
 
     def _clip_augmented(self, y):
         # Clip YOLOv5 augmented inference tails
-        nl = self.model[-1].nl  # number of detection layers (P3-P5)
+        nl = self.model[-2].nl-1  # number of detection layers (P3-P5)
         g = sum(4 ** x for x in range(nl))  # grid points
         e = 1  # exclude layer count
         i = (y[0].shape[1] // g) * sum(4 ** x for x in range(e))  # indices
@@ -200,7 +201,7 @@ class Model(nn.Module):
     def _initialize_biases(self, cf=None):  # initialize biases into Detect(), cf is class frequency
         # https://arxiv.org/abs/1708.02002 section 3.3
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
-        m = self.model[-1]  # Detect() module
+        m = self.model[-2]  # Detect() module
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
             b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
@@ -208,7 +209,7 @@ class Model(nn.Module):
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
     def _print_biases(self):
-        m = self.model[-1]  # Detect() module
+        m = self.model[-2]  # Detect() module
         for mi in m.m:  # from
             b = mi.bias.detach().view(m.na, -1).T  # conv.bias(255) to (3,85)
             LOGGER.info(
@@ -235,13 +236,33 @@ class Model(nn.Module):
     def _apply(self, fn):
         # Apply to(), cpu(), cuda(), half() to model tensors that are not parameters or registered buffers
         self = super()._apply(fn)
-        m = self.model[-1]  # Detect()
+        m = self.model[-2]  # Detect()
         if isinstance(m, Detect):
             m.stride = fn(m.stride)
             m.grid = list(map(fn, m.grid))
             if isinstance(m.anchor_grid, list):
                 m.anchor_grid = list(map(fn, m.anchor_grid))
         return self
+    
+    def fuse_model(self):
+        for x in self.model:
+            if type(x)==Conv:
+                torch.quantization.fuse_modules(x, ['conv', 'bn'], inplace=True)
+            elif type(x)==C3:
+                for k in x.children():
+                    if type(k)==Conv:
+                        torch.quantization.fuse_modules(k, ['conv', 'bn'], inplace=True)
+                    else:
+                        for g in k.children():
+                            for j in g.children():
+                                if type(j)==Conv:
+                                    torch.quantization.fuse_modules(j, ['conv', 'bn'], inplace=True)
+            elif type(x)==SPPF:
+                for u in x.children():
+                    if type(u)==Conv:
+                        torch.quantization.fuse_modules(u, ['conv', 'bn'], inplace=True)
+            else:
+                continue
 
 
 def parse_model(d, ch, changes):  # model_dict, input_channels(3)
@@ -285,13 +306,13 @@ def parse_model(d, ch, changes):  # model_dict, input_channels(3)
         else:
             c2 = ch[f]
         if i in changes:
-            if i==4:
+            if i==5:
               args[2]=args[2]*2
-            if i==6:
+            if i==7:
               args[2]=args[2]+2
-        if i in [2,8,13]:
-            args[2]+=1
-        if i in [2,4,6,8,13,17]:
+            if i in [3,9,14]:
+                args[2]+=1
+        if i in [3,5,7,9,14,18]:
             print(args[2])
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
         t = str(m)[8:-2].replace('__main__.', '')  # module type
@@ -305,7 +326,6 @@ def parse_model(d, ch, changes):  # model_dict, input_channels(3)
         ch.append(c2)
     return nn.Sequential(*layers), sorted(save)
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type=str, default='yolov5s.yaml', help='model.yaml')
@@ -315,7 +335,6 @@ if __name__ == '__main__':
     parser.add_argument('--changes', type=str, help='Enter Changes to YOLO model')
     opt = parser.parse_args()
     opt.cfg = check_yaml(opt.cfg)  # check YAML
-    print_args(FILE.stem, opt)
     device = select_device(opt.device)
 
     # Create model
